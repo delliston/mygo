@@ -12,27 +12,22 @@ import (
 
 // This could become a System type
 func main() {
-	NumFloors := 20	// Floors are numbered from 0
+	NumFloors := 10	// Floors are numbered from 0
 	NumElevators := 3	// TODO: Read these from args
 	s := lift.NewSystem(NumFloors, NumElevators)
 
 	wgPass := sync.WaitGroup{}
-//	wgPass.Add(1)		// hack
 
-//  	go func() {
-		for id := 1; id < 3; id++ {
-			wgPass.Add(1)
-			p := &Passenger{ id, lift.Floor(rand.Intn(NumFloors)), lift.Floor(rand.Intn(NumFloors)) }
-			log.Printf("Pass-%d: created with start %s, dest %s\n", id, p.start, p.dest)
-			go func() {
-				p.mainLoop(s.PickupReqs())
-				wgPass.Done()
-			}()
-			time.Sleep(5 * lift.Tick)
-		}
-//		wgPass.Done()	// hack
-//	}()
-
+	for id := 1; id < 5; id++ {
+		wgPass.Add(1)
+		p := &Passenger{ id, lift.Floor(rand.Intn(NumFloors)), lift.Floor(rand.Intn(NumFloors)) }
+		log.Printf("Pass-%d: created with start %s, dest %s\n", id, p.start, p.dest)
+		go func() {
+			p.main(s.Pickups())
+			wgPass.Done()
+		}()
+		time.Sleep(5 * lift.Tick)
+	}
 	wgPass.Wait()	// Waits until all passengers complete. This is a bit random. May exit immediately if first passenger has src=dest.
 }
 
@@ -40,42 +35,47 @@ func main() {
 // NOT USED.
 type Passenger struct {
 	id int
-	start lift.Floor
+	start lift.Floor	// Ick: naming start v. end, origin vs. dest?
 	dest lift.Floor
-	// FUTURE: Passenger should not specify destination (until picked up).
-	// So, specify a channel it will read (when picked up) which accepts a writable chan of destination
-	// E.g.:
-	// chan chan<- Floor
 }
 
-func (p *Passenger) mainLoop(chPickupReqs chan<- lift.PickupReq) {
+func (p *Passenger) main(chPickupReqs chan<- lift.Pickup) {
 	if p.start == p.dest {
 		fmt.Printf("Pass-%d skipping elevator: start %s == dest %s", p.start, p.dest)
 		return
 	}
-	// FUTURE: sleep random time
 
-	chChDropoffs := make(lift.ArrivalChannel)
+	// Request pickup and wait.
+	chArrival := make(chan lift.Arrival)
 	dir := p.start.DirectionTo(p.dest)
+	pickup := lift.Pickup{p.start, dir, chArrival}
 	log.Printf("Pass-%d requesting pickup %s %s\n", p.id, p.start, dir)
-	chPickupReqs <- lift.PickupReq{lift.NewPickup(p.start, dir), chChDropoffs}
-	log.Printf("Pass-%d waiting for pickup %s %s on channel %v\n", p.id, p.start, dir, chChDropoffs)
+	chPickupReqs <- pickup
+	log.Printf("Pass-%d waiting for pickup %s %s on channel %v\n", p.id, p.start, dir, chArrival)
 
-	// Wait until an arrival, indicated by receiving a chan<- Dropoff
-	chDropoff := <-chChDropoffs
-	log.Printf("Pass-%d got lift %s %s\n", p.id, p.start, dir)
+	// Wait for arrival.
+	a := <-chArrival
+	if a.Floor != p.start {
+		panic(fmt.Sprintf("Waiting at %s, but pickup arrival says %s", p.start, a.Floor))
+	}
+	if a.Dir != dir {
+		panic(fmt.Sprintf("Waiting for %s lift, but pickup arrival says direction is %s", dir, a.Dir))
+	}
 
-	// Board and press button
-	time.Sleep(lift.TimeSelectDropoff)
+	// Board and press button.
+	log.Printf("Pass-%d boarded Elevator-%d at %s %s\n", p.id, a.Conveyor.Id(), p.start, dir)
+	time.Sleep(lift.TimeSelectDropoff)	// FUTURE: elevator door may close before passenger boards.
 	log.Printf("Pass-%d requesting dropoff %s\n", p.id, p.dest)
-	chDropoff <- lift.NewDropoff(p.dest)
-	// TODO	chDropoff <- lift.DropoffReq{lift.NewDropoff(p.dest), chChDropoffs()}	// shouldn't reuse that channel
-
+	dropoff := lift.Dropoff{ p.dest, chArrival }	// FUTURE: May want to use different channel for pickup and dropoff
+	a.Conveyor.Dropoffs() <- dropoff
 	log.Printf("Pass-%d riding to floor %s\n", p.id, p.dest)
 
-
-	// TODO: Wait until dropoff completed (arrival). Shouldn't that come from elevator?
-	//	Change Dropoff to DropoffReq{ p.dest, chan<- Arrival }
+	// Wait for arrival
+	a = <-chArrival
+	if a.Floor != p.dest {
+		panic(fmt.Sprintf("Pass-%d waiting to arrive at at %s, but dropoff arrival says %s", p.dest, a.Floor))
+	}
+	log.Printf("Pass-%d arrived at destination floor %s\n", p.id, p.dest)
 }
 
 

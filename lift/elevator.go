@@ -35,12 +35,13 @@ import (
 
 	If going DOWN, reverse the UP clause.
 
-	x Initial, Simpler Algorithm
+	OLD: Simpler Algorithm
 	  - @STEP
-	  	if direction != 0:
+	  	while direction != 0:
 		  	floor += direction
-		  	if floor in pickups or dropoffs, open door, delete pickup & dropoff
-		  	if no pickups/dropoffs above:
+		  	if floor in pickups or dropoffs:
+		  		open door, delete pickup & dropoff
+		  	else if no pickups/dropoffs above:
 		  		if pickups/dropoffs below:
 		  			direction *= -1
 		  		else:
@@ -50,11 +51,54 @@ import (
 		  If it gets an UP request from floor 15, en route, it will not service it before taking 10 DOWN.
 		  If pickup DOWN @ 10 is serviced, and passenger requests dropoff above, what should we do?
 
+	CASE: An IDLE elevator receives a pickup request for the floor it is on. Yep, not handled.
+
 	USE CASES
 	- A pickup is issued to an elevator A. Later, elevator B stops at that floor, going in the right direction.
 	  Then the first pickup should be cancelled.
 	- How to prevent starvation? Should pickup requests be handled in the order received?
 */
+
+// Keeps track of those waiting for an Arrival
+type ArrivalListeners map[FloorDir][]chan<- Arrival		// Tracks for each FloorDir
+func (m ArrivalListeners) addDropoffListener(dropoff Dropoff) {
+	m._addListener(FloorDir{dropoff.Floor, IDLE}, dropoff.Done)
+}
+func (m ArrivalListeners) addPickupListener(pickup Pickup) {
+	m._addListener(FloorDir{pickup.Floor, pickup.Dir}, pickup.Done)
+}
+func (m ArrivalListeners) _addListener(floorDir FloorDir, listener chan<- Arrival) {
+	arr := m[floorDir]
+	if arr == nil {
+		arr = make([]chan<- Arrival, 0)
+	}
+	arr = append(arr, listener)
+	m[floorDir] = arr
+}
+func (m ArrivalListeners) notifyArrival(arrival Arrival) {
+	// Notify dropoffs.
+	m._notify(FloorDir{arrival.Floor, IDLE}, arrival)
+
+	// Notify pickups iff we have a direction.
+	if arrival.Dir != IDLE {
+		// Notify pickups
+		m._notify(FloorDir{arrival.Floor, arrival.Dir}, arrival)
+	}
+}
+
+// Notifies the Pickup and Dropoff listeners.
+func (m ArrivalListeners) _notify(floorDir FloorDir, arrival Arrival) {
+	arr := m[floorDir]
+	if arr != nil {
+		for _, ch := range arr {
+			go func() {
+				ch<- arrival		// FUTURE: Handle closed channel
+			}()
+		}
+		m[floorDir] = nil
+	}
+}
+
 
 // Elevator implements Conveyor:
 // 	- Reads Pickups from a channel.
@@ -70,26 +114,29 @@ type Elevator struct {
 	floor Floor  	// The last floor we passed, or (if dir==IDLE, the floor we are sitting on). The floor has already been serviced.
 	dest Floor		// The current destination. dir == floor.DirectionTo(dest). If dir == IDLE, dest == floor.
 	dir Direction   // Current direction of the elevator: UP, DOWN, or IDLE.
-	pickup *Pickup   // Special: The pickup we are rushing towards; after arriving we will set dir = pickup.dir
+	pickup *Pickup   // Special: The pickup we are rushing towards; after arriving we will set dir = pickup.Dir
 	dropoffs *FloorSet    // Which dropoffs (destinations) are requested
 	pickupsUp *FloorSet   // Which pickups (origins) are requested UP
 	pickupsDown *FloorSet   // Which pickups (origins) are requested DOWN
-//	chPickupQueries chan Pickup // System asks for pickup estimates
-//	chPickupQueryEstimates chan PickupEstimate // System asks for pickup estimates
 	chPickups chan Pickup // System sends us pickup demands
 	chDropoffs chan Dropoff // System (or Passenger) sends us dropoff requests from inside elevator.
 	chArrivals chan Arrival // We send when we arrive at a floor (in a direction). FUTURE: Should send dir=IDLE if no outstanding reqs.
+	waiters ArrivalListeners
 	drive *elevatorDriver
+	//	chPickupQueries chan Pickup // System asks for pickup estimates
+	//	chPickupQueryEstimates chan PickupEstimate // System asks for pickup estimates
 }
 func NewElevator(id int, numFloors int) (*Elevator) {
 	e := &Elevator{ id, numFloors, 0, 0, IDLE, nil,
 					newFloorSet(numFloors), newFloorSet(numFloors), newFloorSet(numFloors),
-					make(chan Pickup), make(chan Dropoff), make(chan Arrival), newDriver(id)}
+					make(chan Pickup), make(chan Dropoff), make(chan Arrival),
+					make(ArrivalListeners), newDriver(id)}
 	go e.mainLoop()
 	return e
 }
 //func (e *Elevator) PickupQueries() chan<- Pickup { return e.chPickupQueries }
 //func (e *Elevator) PickupQueryEstimates() chan<- PickupEstimate { return e.chPickupQueryEstimates }
+func (e *Elevator) Id() int { return e.id }
 func (e *Elevator) Pickups() chan<- Pickup { return e.chPickups }
 func (e *Elevator) Dropoffs() chan<- Dropoff { return e.chDropoffs }
 func (e *Elevator) Arrivals() <-chan Arrival { return e.chArrivals }
@@ -107,9 +154,9 @@ func (e *Elevator) pickups(dir Direction) *FloorSet {
 
 func (e *Elevator) gotoPickup(pickup Pickup) {
 	e.pickup = &pickup
-	e.dest = pickup.floor
-	e.dir = e.floor.DirectionTo(pickup.floor)
-	e.sendDriveTo(pickup.floor) // updates e.dir, e.nextStop
+	e.dest = pickup.Floor
+	e.dir = e.floor.DirectionTo(pickup.Floor)
+	e.sendDriveTo(pickup.Floor) // updates e.dir, e.nextStop
 }
 
 func (e *Elevator) gotoFloor(floor Floor) {
@@ -165,45 +212,48 @@ func (e *Elevator) onPickupQuery(pickup Pickup) {
 
 func (e *Elevator) onPickupReq(pickup Pickup) {
 	log.Printf("Elevator-%d received req %v\n", e.id, pickup)
-	if !e.pickups(pickup.dir).set(pickup.floor) {    // returns previous value. If it wasn't set before, then:
+	e.waiters.addPickupListener(pickup)
+	if !e.pickups(pickup.Dir).set(pickup.Floor) {    // returns previous value. If it wasn't set before, then:
 		// Decide whether to go to the new pickup instead.
 		if e.dir == IDLE {
 			// 1. We are IDLE
 			e.gotoPickup(pickup)
 		} else if e.pickup != nil {
 			// 2. We are rushing (in direction e.dir) to a pickup AND either:
-			//    A) The new pickup lies between e.floor and e.pickup.floor
-			//	     AND e.dir == pickup.dir   // after pickup, we continue beyond it
-			//    B) The new pickup lies beyond e.pickup.floor (in direction e.dir) from e.floor
-			//	     AND e.dir == opposite of (pickup.dir) // after pickup, we switch direction
-			if pickup.floor.between(e.floor, e.pickup.floor) {
-				if e.dir == pickup.dir {
+			//    A) The new pickup lies between e.Floor and e.pickup.Floor
+			//	     AND e.dir == pickup.Dir   // after pickup, we continue beyond it
+			//    B) The new pickup lies beyond e.pickup.Floor (in direction e.dir) from e.floor
+			//	     AND e.dir == opposite of (pickup.Dir) // after pickup, we switch direction
+			if pickup.Floor.between(e.floor, e.pickup.Floor) {
+				if e.dir == pickup.Dir {
 					e.gotoPickup(pickup)
 				}
 			} else {
-				if e.dir == pickup.dir.opposite() {
+				if e.dir == pickup.Dir.opposite() {
 					e.gotoPickup(pickup)
 				}
 			}
 		} else {
 			// 3. This pickup lies en route to and in the direction of to our current destination.
-			if e.dir == pickup.dir && pickup.floor.between(e.floor, e.dest) {
-				e.gotoFloor(pickup.floor)
+			if e.dir == pickup.Dir && pickup.Floor.between(e.floor, e.dest) {
+				e.gotoFloor(pickup.Floor)
 			}
 		}
 	}
 }
 
 func (e *Elevator) onDropoffReq(dropoff Dropoff) {
-	if !e.dropoffs.set(dropoff.floor) {    // returns previous value
+	log.Printf("Elevator-%d received req %v\n", e.id, dropoff)
+	e.waiters.addDropoffListener(dropoff)
+	if !e.dropoffs.set(dropoff.Floor) {    // returns previous value
 		if e.dir == IDLE {
-			e.gotoFloor(dropoff.floor)
+			e.gotoFloor(dropoff.Floor)
 		} else if e.pickup != nil {
 			// We ignore the dropoff request. We are rushing to a pickup.
 			// Ouch, that's bad if the pickup comes when user is entering elevator and selecting a floor.
 			// FUTURE: For some period (doors open), block pickup requests, only accept dropoff requests.
-		} else if dropoff.floor.between(e.floor, e.dest) {
-			e.gotoFloor(dropoff.floor)
+		} else if dropoff.Floor.between(e.floor, e.dest) {
+			e.gotoFloor(dropoff.Floor)
 		}
 	}
 }
@@ -211,14 +261,16 @@ func (e *Elevator) onDropoffReq(dropoff Dropoff) {
 func (e *Elevator) onDriveNotification(s DriverStopNotification) {
 	e.floor = s.floor
 	if s.stopping {
-		if e.pickup != nil && e.pickup.floor == e.floor {
+		if e.pickup != nil && e.pickup.Floor == e.floor {
 			// We've hit our target pickup. We may switch direction.
-			e.dir = e.pickup.dir
+			e.dir = e.pickup.Dir
 			e.pickup = nil
 		}
 		e.pickups(e.dir).clear(e.floor)        // FUTURE: signal correct pickup light to clear.
 		e.dropoffs.clear(e.floor)
-		e.chArrivals <- Arrival{ e.floor, e.dir }	// Signal that arrival has occurred. System can notify/clear lights.
+
+		arrival := Arrival{ e.floor, e.dir, e }
+		e.waiters.notifyArrival(arrival)     // Notifies all waiters
 
 		// TODO: Passengers we just picked up have not entered their desired stop. Therefore, we shouldn't pick our next stop yet?
 
