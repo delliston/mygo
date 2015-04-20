@@ -7,11 +7,12 @@ import (
 // Maintains the on/off state of a arr of ints.
 // Answers lowest() and highest() -- FUTURE: efficiently. Tree?
 type FloorSet struct {
-	arr []bool
+	arr      []bool
 	maxFloor Floor
 }
+
 func newFloorSet(count int) *FloorSet {
-	return &FloorSet{make([]bool, count), Floor(count-1)}
+	return &FloorSet{make([]bool, count), Floor(count - 1)}
 }
 func (fs *FloorSet) set(floor Floor) bool {
 	prev := fs.arr[floor]
@@ -23,12 +24,13 @@ func (fs *FloorSet) clear(floor Floor) bool {
 	fs.arr[floor] = false
 	return prev
 }
+
 // Return nearest enabled in direction from floor; if none found, return the argument floor.
 func (fs *FloorSet) nearest(cur Floor, dir Direction) (Floor, bool) {
 	if dir != UP && dir != DOWN {
 		panic(fmt.Sprintf("Invalid direction for FloorSet.nearest(): %d", dir))
 	}
-	maxFloor := fs.maxFloor	// All floorsets must have equal length
+	maxFloor := fs.maxFloor // All floorsets must have equal length
 	for f := cur.next(dir); f >= 0 && f <= maxFloor; f = f.next(dir) {
 		if fs.arr[f] {
 			return f, true
@@ -41,14 +43,14 @@ func (fs *FloorSet) nearest(cur Floor, dir Direction) (Floor, bool) {
 // If none, return cur.
 // Same code as FloorSet.nearest
 // All floorsets must have equal length!
-func nearestInFloorSets(cur Floor, dir Direction, floorSets... *FloorSet) (Floor, bool) {
+func nearestInFloorSets(cur Floor, dir Direction, floorSets ...*FloorSet) (Floor, bool) {
 	if dir != UP && dir != DOWN {
 		panic(fmt.Sprintf("Invalid direction for nearestInFloorSets: %d", dir))
 	}
 	if len(floorSets) == 0 {
 		return InvalidFloor, false
 	}
-	maxFloor := floorSets[0].maxFloor	// All floorsets must have equal length
+	maxFloor := floorSets[0].maxFloor // All floorsets must have equal length
 	for f := cur.next(dir); f >= 0 && f <= maxFloor; f = f.next(dir) {
 		for _, fs := range floorSets {
 			if fs.arr[f] {
@@ -78,7 +80,6 @@ func (fs *FloorSet) furthest(floor Floor, dir Direction) (Floor, bool) {
 
 	return InvalidFloor, false
 }
-
 
 const InvalidFloor = -1
 

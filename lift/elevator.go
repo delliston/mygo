@@ -66,34 +66,36 @@ import (
 //		pickup [floorNum] (request issued outside elevator by potential passenger)
 //	It is not possible to cancel a dropoff request (as in real elevators).
 type Elevator struct {
-	id int
-	numFloors int
-	floor Floor  	// The last floor we passed, or (if dir==IDLE, the floor we are sitting on). The floor has already been serviced.
-	dest Floor		// The current destination. dir == floor.DirectionTo(dest). If dir == IDLE, dest == floor.
-	dir Direction   // Current direction of the elevator: UP, DOWN, or IDLE.
-	dropoffs *FloorSet    // Which dropoffs (destinations) are requested
-	pickupsUp *FloorSet   // Which pickups (origins) are requested UP
-	pickupsDown *FloorSet   // Which pickups (origins) are requested DOWN
-	chPickups chan Pickup // System sends us pickup demands
-	chDropoffs chan Dropoff // System (or Passenger) sends us dropoff requests from inside elevator.
-	chArrivals chan Arrival // We send when we arrive at a floor (in a direction). FUTURE: Should send dir=IDLE if no outstanding reqs.
-	waiters ArrivalListeners
-	drive *elevatorDriver
+	id          int
+	numFloors   int
+	floor       Floor        // The last floor we passed, or (if dir==IDLE, the floor we are sitting on). The floor has already been serviced.
+	dest        Floor        // The current destination. dir == floor.DirectionTo(dest). If dir == IDLE, dest == floor.
+	dir         Direction    // Current direction of the elevator: UP, DOWN, or IDLE.
+	dropoffs    *FloorSet    // Which dropoffs (destinations) are requested
+	pickupsUp   *FloorSet    // Which pickups (origins) are requested UP
+	pickupsDown *FloorSet    // Which pickups (origins) are requested DOWN
+	chPickups   chan Pickup  // System sends us pickup demands
+	chDropoffs  chan Dropoff // System (or Passenger) sends us dropoff requests from inside elevator.
+	chArrivals  chan Arrival // We send when we arrive at a floor (in a direction). FUTURE: Should send dir=IDLE if no outstanding reqs.
+	waiters     ArrivalListeners
+	drive       *elevatorDriver
 	//	chPickupQueries chan Pickup // System asks for pickup estimates
 	//	chPickupQueryEstimates chan PickupEstimate // System asks for pickup estimates
 }
-func NewElevator(id int, numFloors int) (*Elevator) {
-	e := &Elevator{ id, numFloors, 0, 0, IDLE,
-					newFloorSet(numFloors), newFloorSet(numFloors), newFloorSet(numFloors),
-					make(chan Pickup), make(chan Dropoff), make(chan Arrival),
-					make(ArrivalListeners), newDriver(id)}
+
+func NewElevator(id int, numFloors int) *Elevator {
+	e := &Elevator{id, numFloors, 0, 0, IDLE,
+		newFloorSet(numFloors), newFloorSet(numFloors), newFloorSet(numFloors),
+		make(chan Pickup), make(chan Dropoff), make(chan Arrival),
+		make(ArrivalListeners), newDriver(id)}
 	go e.mainLoop()
 	return e
 }
+
 //func (e *Elevator) PickupQueries() chan<- Pickup { return e.chPickupQueries }
 //func (e *Elevator) PickupQueryEstimates() chan<- PickupEstimate { return e.chPickupQueryEstimates }
-func (e *Elevator) Id() int { return e.id }
-func (e *Elevator) Pickups() chan<- Pickup { return e.chPickups }
+func (e *Elevator) Id() int                  { return e.id }
+func (e *Elevator) Pickups() chan<- Pickup   { return e.chPickups }
 func (e *Elevator) Dropoffs() chan<- Dropoff { return e.chDropoffs }
 func (e *Elevator) Arrivals() <-chan Arrival { return e.chArrivals }
 
@@ -110,7 +112,7 @@ func (e *Elevator) pickups(dir Direction) *FloorSet {
 
 // Tells to Drive to go to dest, and checks response. If accepted, updates e.dir and e.dest
 func (e *Elevator) gotoFloor(dest Floor) {
-	if dest == e.floor || dest == e.dest {        // This check may be unnecessary, better panic instead?
+	if dest == e.floor || dest == e.dest { // This check may be unnecessary, better panic instead?
 		log.Printf("Elevator-%d: WARNING: superfluous gotoFloor\n", e.id)
 		return
 	}
@@ -118,9 +120,9 @@ func (e *Elevator) gotoFloor(dest Floor) {
 	// Call drive synchronously (via chan + wait for reply).
 	chReply := make(chan Floor)
 	log.Printf("Elevator-%d sending drive to %v", e.id, dest)
-	e.drive.chRequests<- DriverDestRequest{dest, chReply}
+	e.drive.chRequests <- DriverDestRequest{dest, chReply}
 	newDest := <-chReply
-	e.dir = e.floor.DirectionTo(e.dest)	// whether the new e.dest is the specified dest, or if it failed, stil udpate dir.
+	e.dir = e.floor.DirectionTo(e.dest) // whether the new e.dest is the specified dest, or if it failed, stil udpate dir.
 	if newDest == dest {
 		log.Printf("Elevator-%d drive accepted new dest %v", e.id, dest)
 		e.dest = dest
@@ -133,10 +135,10 @@ func (e *Elevator) gotoFloor(dest Floor) {
 func (e *Elevator) mainLoop() {
 	for {
 		select {
-//		case pickupQuer := <-e.chPickupQueries:
-//			// Passenger outside elevator requests pickup. System requests estimates from several elevators.
-//			// Return #stops/distance/etc. before this pickup
-//			e.onPickupQuery(pickupQuery)    // FUTURE: Handle proposals.
+		//		case pickupQuer := <-e.chPickupQueries:
+		//			// Passenger outside elevator requests pickup. System requests estimates from several elevators.
+		//			// Return #stops/distance/etc. before this pickup
+		//			e.onPickupQuery(pickupQuery)    // FUTURE: Handle proposals.
 
 		case pickup := <-e.chPickups:
 			// Passenger outside elevator requests pickup. System assigns request to us.
@@ -215,7 +217,7 @@ func (e *Elevator) onDropoffReq(dropoff Dropoff) {
 
 	e.waiters.addDropoffListener(dropoff)
 
-	if !e.dropoffs.set(dropoff.Floor) {    // returns previous value
+	if !e.dropoffs.set(dropoff.Floor) { // returns previous value
 		if e.dir == IDLE {
 			e.gotoFloor(dropoff.Floor)
 		} else if dropoff.Floor.between(e.floor, e.dest) {
@@ -233,10 +235,10 @@ func (e *Elevator) onDriveNotification(s DriverStopNotification) {
 		}
 
 		e.dropoffs.clear(e.floor)
-		e.pickups(e.dir).clear(e.floor)        // FUTURE: signal correct pickup light to clear.
+		e.pickups(e.dir).clear(e.floor) // FUTURE: signal correct pickup light to clear.
 
-		arrival := Arrival{ e.floor, e.dir, e }
-		e.waiters.notifyArrival(arrival)     // Notifies all waiters
+		arrival := Arrival{e.floor, e.dir, e}
+		e.waiters.notifyArrival(arrival) // Notifies all waiters
 
 		// TODO: Passengers we just picked up have not entered their desired stop.
 		// 		 We should wait for some time before choosing our next stop.
@@ -246,12 +248,12 @@ func (e *Elevator) onDriveNotification(s DriverStopNotification) {
 		if ok {
 			// Very special case (ick): the current floor has pickup in opposite direction
 			if dest == e.floor {
-				e.pickups(e.dir.opposite()).clear(e.floor)        // FUTURE: signal correct pickup light to clear.
-				e.waiters.notifyArrival(Arrival{ e.floor, e.dir.opposite(), e})
+				e.pickups(e.dir.opposite()).clear(e.floor) // FUTURE: signal correct pickup light to clear.
+				e.waiters.notifyArrival(Arrival{e.floor, e.dir.opposite(), e})
 				e.dest = e.floor
 				e.dir = IDLE
 			} else {
-				e.gotoFloor(dest)    // sets e.dest, e.dir
+				e.gotoFloor(dest) // sets e.dest, e.dir
 			}
 		} else {
 			e.dest = e.floor
@@ -289,17 +291,19 @@ func (e *Elevator) calculateNextStop() (dest Floor, ok bool) {
 		return
 	}
 
-	// 3. The nearest dropoff or pickup (where pickup.dir == current direction)
+	// OK, there's in our current direction. Find something in the other direction.
+
+	// 3. The nearest dropoff or pickup (where pickup.dir == OPPOSITE direction)
 	// 		which lies beyond e.floor in OPPOSITE direction
-	dest, ok = nearestInFloorSets(floor, dirOpposite, e.dropoffs, e.pickups(dir))
+	dest, ok = nearestInFloorSets(floor, dirOpposite, e.dropoffs, e.pickups(dirOpposite)) // REVIEW: was pickups(dir)
 	if ok {
 		return
 	}
 
-	// 4. The furthest pickup (where pickup.dir == OPPOSITE direction)
+	// 4. The furthest pickup (where pickup.dir == current direction)
 	// 		which lies AT OR beyond e.floor in OPPOSITE direction
 	//	  E.g., if dir == DOWN, find the highest pickup.
-	dest, ok = e.pickups(dirOpposite).furthest(floor, dirOpposite)
+	dest, ok = e.pickups(dir).furthest(floor, dirOpposite) // REVIEW: was pickups(dirOpposite)
 	if ok {
 		return
 	}
@@ -309,9 +313,8 @@ func (e *Elevator) calculateNextStop() (dest Floor, ok bool) {
 	return InvalidFloor, false
 }
 
-
 // Keeps track of those waiting for an Arrival
-type ArrivalListeners map[FloorDir][]chan<- Arrival		// Tracks for each FloorDir
+type ArrivalListeners map[FloorDir][]chan<- Arrival // Tracks for each FloorDir
 
 func (m ArrivalListeners) addDropoffListener(dropoff Dropoff) {
 	m._addListener(FloorDir{dropoff.Floor, IDLE}, dropoff.Done)
@@ -345,10 +348,9 @@ func (m ArrivalListeners) _notify(floorDir FloorDir, arrival Arrival) {
 		for _, ch := range arr {
 			log.Printf("Elevator-%d notifying arrival on channel %v", arrival.Conveyor.Id(), ch)
 			go func() {
-				ch<- arrival		// FUTURE: Handle closed channel
+				ch <- arrival // FUTURE: Handle closed channel
 			}()
 		}
 		m[floorDir] = nil
 	}
 }
-

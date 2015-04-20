@@ -2,7 +2,7 @@ package lift
 
 import (
 	"math/rand"
-//	"fmt"
+	//	"fmt"
 	"log"
 )
 
@@ -11,19 +11,20 @@ import (
 type System struct {
 	elevators []Conveyor
 	// FUTURE: Is it really necessary to track pickups{Up,Down}? Elevators do it already. Seems the System wants to know too.
-	pickupsUp *FloorSet // Floors which have outstanding UP requests are true
-	pickupsDown *FloorSet // Floors which have outstanding DOWN requests are true
-	chPickups chan Pickup  // System receives Pickup Requests from users.
-//	chArrivals chan Arrival
-//	waiters ArrivalListenerss  // On arrival at FloorDir, forward Arrival channel to all registered listeners.
+	pickupsUp   *FloorSet   // Floors which have outstanding UP requests are true
+	pickupsDown *FloorSet   // Floors which have outstanding DOWN requests are true
+	chPickups   chan Pickup // System receives Pickup Requests from users.
+	//	chArrivals chan Arrival
+	//	waiters ArrivalListenerss  // On arrival at FloorDir, forward Arrival channel to all registered listeners.
 }
+
 func (s *System) Pickups() chan<- Pickup { return s.chPickups }
 func NewSystem(numFloors, numElevators int) *System {
-	elevators := make([]Conveyor, numElevators)			// <sigh> In Python, these 4 lines would just be a List Comprehension: [ NewElevator(i, numFloors) for i in range(numFloors) ]
+	elevators := make([]Conveyor, numElevators) // <sigh> In Python, these 4 lines would just be a List Comprehension: [ NewElevator(i, numFloors) for i in range(numFloors) ]
 	for i := 0; i < numElevators; i++ {
 		elevators[i] = NewElevator(i, numFloors)
 	}
-	s := &System{ elevators, newFloorSet(numFloors), newFloorSet(numFloors), make(chan Pickup) }
+	s := &System{elevators, newFloorSet(numFloors), newFloorSet(numFloors), make(chan Pickup)}
 	go s.mainLoop()
 	return s
 }
@@ -32,26 +33,26 @@ func (s *System) mainLoop() {
 	// Assumptions: all elevators are at floor 0, and all buttons are cleared
 	for {
 		select {
-			case pickupReq := <-s.chPickups:
-				s.onPickupReq(pickupReq)
-//			case arrival := <-s.chArrivals:			// Currently, we don't subscribe to these.
-//				s.onArrival(arrival)
+		case pickupReq := <-s.chPickups:
+			s.onPickupReq(pickupReq)
+			//			case arrival := <-s.chArrivals:			// Currently, we don't subscribe to these.
+			//				s.onArrival(arrival)
 		}
 	}
 }
 
 func (s *System) onPickupReq(pickupReq Pickup) {
 	log.Printf("System got %v\n", pickupReq)
-//	s.addArrivalListener(FloorDir(pickupReq.Pickup), pickupReq.Done)
-//	if ! s.pickups(pickupReq.dir).set(pickupReq.floor) {
-		// Find a suitable elevator
-		// FUTURE: Send PickupQuery to (some/all) elevators and choose the best result.
-		// For now, random:
-		id := rand.Intn(len(s.elevators))
-		e := s.elevators[id]
-		log.Printf("System sending %v to Elevator-%d\n", pickupReq, id)
-		e.Pickups() <- pickupReq
-//	}
+	//	s.addArrivalListener(FloorDir(pickupReq.Pickup), pickupReq.Done)
+	//	if ! s.pickups(pickupReq.dir).set(pickupReq.floor) {
+	// Find a suitable elevator
+	// FUTURE: Send PickupQuery to (some/all) elevators and choose the best result.
+	// For now, random:
+	id := rand.Intn(len(s.elevators))
+	e := s.elevators[id]
+	log.Printf("System sending %v to Elevator-%d\n", pickupReq, id)
+	e.Pickups() <- pickupReq
+	//	}
 }
 
 /* FUTURE: As optimization, we should track the set/cleared status of each Floor's UP/DOWN buttons,
@@ -69,8 +70,6 @@ func (s *System) onPickupReq(pickupReq Pickup) {
 //		panic(fmt.Sprintf("Direction must be up or down, found %d", dir))
 //	}
 //}
-
-
 
 // Needed because GoLang lacks generics. In Java, would be Map<FloorDir, Set<ArrivalChannel>>
 //func (s *System) onArrival(arrival elevatorArrival) {
