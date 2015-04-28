@@ -14,6 +14,7 @@ type FloorSet struct {
 func newFloorSet(count int) *FloorSet {
 	return &FloorSet{make([]bool, count), Floor(count - 1)}
 }
+
 func (fs *FloorSet) set(floor Floor) bool {
 	prev := fs.arr[floor]
 	fs.arr[floor] = true

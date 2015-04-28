@@ -29,6 +29,7 @@ func main() {
 		time.Sleep(5 * lift.Tick)
 	}
 	wgPass.Wait() // Waits until all passengers complete. This is a bit random. May exit immediately if first passenger has src=dest.
+	log.Println("All passengers have been serviced")
 }
 
 // Passenger is group of people who requests a pickup or dropoff

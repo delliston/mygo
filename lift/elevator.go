@@ -347,8 +347,9 @@ func (m ArrivalListeners) _notify(floorDir FloorDir, arrival Arrival) {
 	if arr != nil {
 		for _, ch := range arr {
 			log.Printf("Elevator-%d notifying arrival on channel %v", arrival.Conveyor.Id(), ch)
+			chSend := ch
 			go func() {
-				ch <- arrival // FUTURE: Handle closed channel
+				chSend <- arrival // FUTURE: Handle closed channel
 			}()
 		}
 		m[floorDir] = nil

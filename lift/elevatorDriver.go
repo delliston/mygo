@@ -82,6 +82,5 @@ func (d *elevatorDriver) mainLoop(floor Floor) {
 		}
 	}
 
-	log.Println("All passengers have been serviced")
 	os.Exit(0)
 }
